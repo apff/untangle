@@ -1,0 +1,64 @@
+# App-level configuration for untangle. Copy this directory to `config/`
+# (gitignored) and edit, or mount your own directory to /app/config in Docker.
+# Everything here is OPTIONAL — with no config at all, untangle runs from
+# environment variables alone (see .env.example).
+
+# Shown in the webapp header, tab titles, and report headings.
+# title: Acme Tech Stack Explorer
+
+# Where to find your repositories. Mixed types are fine; all are scanned.
+# Tokens are referenced by ENV VAR NAME (token_env) so this file stays
+# committable. Without this key, origins come from the environment:
+# GITLAB_URL, GITHUB_ORG/GITHUB_USER, GIT_REPOS.
+#
+# origins:
+#   - type: gitlab
+#     url: https://gitlab.example.com        # self-hosted or https://gitlab.com
+#     token_env: GITLAB_API_TOKEN            # scope: read_api + read_repository
+#     include: []                            # optional path regexes (keep only matches)
+#     exclude: ["^sandbox/"]                 # optional path regexes (drop matches)
+#   - type: github
+#     org: acme-co                           # or `user: someone`
+#     token_env: GITHUB_TOKEN                # optional for public repos
+#     # api_url: https://github.example.com/api/v3   # GitHub Enterprise
+#   - type: static
+#     repos:
+#       - https://github.com/pallets/flask.git
+#       - git@git.example.com:tools/thing.git
+#     token_env: ""                          # optional, for private https URLs
+#     # token_user: oauth2                   # username sent with the token
+
+# What counts as an "internal" dependency between your repos.
+# Defaults: git_hosts = the origin hostnames; internal_domains = the origin
+# hostnames minus github.com/gitlab.com. Registry hosts and npm scopes have no
+# safe default — list them explicitly to detect those reference types.
+#
+# detection:
+#   internal_domains: [example.com, example.dev]   # URLs on these domains are internal refs
+#   git_hosts: [gitlab.example.com]                # git deps / terraform sources on these hosts
+#   registry_hosts: [registry.example.com]         # container images from these registries
+#   npm_scopes: ["@acme"]                          # first-party npm scopes
+#   infer_service_calls: false                     # opt-in (default false): guess service-call
+#                                                  # edges by matching a loose internal URL's PATH
+#                                                  # against repos' discovered routes. Best-effort
+#                                                  # — orgs that route by path behind shared
+#                                                  # gateways get useful edges; it can mis-attribute
+#                                                  # ambiguous URLs, so enable knowingly.
+
+# The graph's central "Shared Components" cluster — org-wide building blocks
+# with the largest blast radius. By default a repo lands there automatically
+# when repos from 2+ systems depend on it (cross-system hub). Use these
+# OPTIONAL overrides (repo-path globs) to force the classification:
+#
+# shared:
+#   include: ["*/shared/*", "infra/base-docker-image"]  # always treat as shared hubs
+#   exclude: ["data/warehouse"]                          # never treat as shared
+
+# "Update available" footer hint. The analyzer (server-side, not the browser)
+# checks the project's GitHub releases once per run and embeds the latest
+# version into graph.json; the webapp footer links to it when it's newer than
+# the running version. Disable for airgapped deployments or to avoid the call.
+#
+# update_check:
+#   enabled: true              # default true
+#   repo: apff/untangle        # owner/name to check releases for

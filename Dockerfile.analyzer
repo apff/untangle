@@ -1,0 +1,43 @@
+# Analyzer image — clones every configured repo (shallow) and produces
+# data/analysis/dependency_report.json. Heavy but EPHEMERAL: run via compose,
+# a scheduled CI job, or `docker run` anywhere with disk + a token.
+#
+# The clone cache + outputs live under DATA_DIR (default /data) — mount a volume
+# there so daily runs are cheap `git fetch --depth 1` deltas, not full re-clones.
+FROM python:3.14-slim
+
+# git: clone/fetch the repos. ca-certificates: HTTPS to the git hosts.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv: fast, reproducible dependency installs from uv.lock.
+# Pinned for reproducibility — bump deliberately alongside uv.lock.
+COPY --from=ghcr.io/astral-sh/uv:0.9.27 /uv /uvx /bin/
+
+WORKDIR /app
+ENV UV_LINK_MODE=copy
+
+# Install dependencies first so this layer is cached until the lockfile changes.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Then the package itself (provides the `untangle` entry point).
+COPY src/ ./src/
+RUN uv sync --frozen --no-dev
+
+# Deploy-time config (untangle.yml/systems.yml/prefixes.yml), resolved at
+# runtime relative to /app by static_config.config_dir(). The image carries the
+# generic templates; deployments override by mounting their own config dir over
+# /app/config (see docker-compose.yml).
+COPY config.example/ ./config/
+
+# Don't let `uv run` re-sync at runtime; outputs + clone cache go under /data.
+ENV UV_NO_SYNC=1 \
+    DATA_DIR=/data
+VOLUME ["/data"]
+
+# Run-on-a-loop scheduler (RUN_INTERVAL seconds, 0 = run once and exit).
+COPY analyzer-entrypoint.sh /analyzer-entrypoint.sh
+RUN chmod +x /analyzer-entrypoint.sh
+ENTRYPOINT ["/analyzer-entrypoint.sh"]

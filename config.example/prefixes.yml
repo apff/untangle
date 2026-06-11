@@ -1,0 +1,13 @@
+# Manual URL-prefix -> owning-repo hints (OPTIONAL).
+#
+# The analyzer resolves hardcoded internal URLs to the repos that serve them by
+# extracting routes from source code (React/Express/FastAPI/Flask/C#...). When
+# extraction can't see a route (opaque frameworks, external configs), add a
+# hint here: the first URL path segment(s) -> the repo path that owns them.
+#
+# `untangle analyze` warns under "Config drift" when an entry here points to a
+# repo that no longer exists.
+
+# prefixes:
+#   api/billing: platform/billing-service     # https://example.com/api/billing/... -> platform/billing-service
+#   shop: storefront/shop-frontend

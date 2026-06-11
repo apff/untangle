@@ -1,0 +1,33 @@
+# System groupings for the webapp dashboard (OPTIONAL).
+#
+# Each system bundles one or more top-level repo groups (the part before the
+# first `/` in a repo path) into a product area. The analyzer embeds this into
+# dependency_report.json; the webapp reads it from there.
+#
+# Without this file, untangle synthesizes one system per top-level group —
+# start with that, then write this file when you want curated names, colors,
+# and groupings.
+#
+# Fields per system:
+#   name        display name
+#   groups      top-level repo group paths that belong to this system
+#   description one-line summary
+#   tier        primary | secondary  (controls dashboard placement)
+#   color       hex accent color
+#
+# The analyzer warns under "Config drift" when a repo's top-level group isn't
+# mapped to any system here, or when a configured group has no repos.
+
+# systems:
+#   platform:
+#     name: Core Platform
+#     groups: [platform, core-services]
+#     description: Shared services and orchestration
+#     tier: primary
+#     color: '#6c8ebf'
+#   tooling:
+#     name: Tooling
+#     groups: [tools]
+#     description: Internal developer tooling
+#     tier: secondary
+#     color: '#98c379'

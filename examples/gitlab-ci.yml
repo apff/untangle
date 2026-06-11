@@ -1,0 +1,140 @@
+# EXAMPLE GitLab CI/CD pipeline for a self-hosted untangle deployment that
+# runs the analyzer on a schedule and publishes the report to the GitLab
+# generic Package Registry (the webapp's REPORT_URL pull mode consumes it).
+# Copy to `.gitlab-ci.yml` in your deployment repo and adapt.
+#
+#   test    — ruff + pytest on every push / merge request.
+#   build   — build & push the analyzer + webapp images to the Container Registry
+#             (when their inputs change on the default branch, or manually).
+#   analyze — the heavy job: shallow-clone every repo, analyze, and PUBLISH
+#             graph.json (the webapp's data contract) to the generic Package
+#             Registry. Runs on a SCHEDULE (CI/CD > Schedules) or manually.
+#
+# Required CI/CD variables (Settings > CI/CD > Variables), masked:
+#   GITLAB_URL        e.g. https://gitlab.example.com
+#   GITLAB_API_TOKEN  token with read_api + read_repository (a group access token is ideal)
+# Optional:
+#   ALERT_WEBHOOK_URL Slack/Mattermost-style incoming webhook; pinged if `analyze` fails.
+#
+# The `analyze` job runs on a DEDICATED runner (tag: untangle) whose host
+# provides a persistent DATA_DIR (see docs/deployment.md), so the multi-GB clone
+# cache survives between runs as cheap `git fetch` deltas — no zip-cache upload.
+#
+# The published graph.json is pulled by the webapp container at runtime
+# (webapp/docker-entrypoint.sh). Stable download URL:
+#   $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/dependency-explorer/latest/graph.json
+
+stages:
+  - test
+  - build
+  - analyze
+
+# --------------------------------------------------------------------------
+# Lint + unit tests
+# --------------------------------------------------------------------------
+lint-test:
+  stage: test
+  image: ghcr.io/astral-sh/uv:0.9.27-python3.12-bookworm-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - uv sync --frozen
+    - uv run ruff check .
+    - uv run pytest -q
+
+# --------------------------------------------------------------------------
+# Image builds (kaniko — no privileged/dind required).
+# --------------------------------------------------------------------------
+.kaniko:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - Dockerfile.analyzer
+        - pyproject.toml
+        - uv.lock
+        - src/**/*
+        - webapp/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+
+build:analyzer:
+  extends: .kaniko
+  script:
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile.analyzer"
+      --destination "$CI_REGISTRY_IMAGE/analyzer:latest"
+      --destination "$CI_REGISTRY_IMAGE/analyzer:$CI_COMMIT_SHORT_SHA"
+
+build:web:
+  extends: .kaniko
+  script:
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR/webapp"
+      --dockerfile "$CI_PROJECT_DIR/webapp/Dockerfile"
+      --destination "$CI_REGISTRY_IMAGE/web:latest"
+      --destination "$CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHORT_SHA"
+
+# --------------------------------------------------------------------------
+# The scheduled analysis run.
+# --------------------------------------------------------------------------
+analyze:
+  stage: analyze
+  # Runs on the DEDICATED runner whose host mounts a persistent DATA_DIR, so the
+  # clone cache lives outside the workspace and survives between runs. See
+  # docs/deployment.md for the runner + volume setup.
+  tags:
+    - untangle
+  # Self-contained base + toolchain so this job never depends on the build stage.
+  # To speed up later, swap to `image: $CI_REGISTRY_IMAGE/analyzer:latest`, set
+  # `cd /app` in script, and drop the before_script (git + uv are baked in).
+  image: python:3.12-slim
+  variables:
+    DATA_DIR: /srv/untangle/data   # persistent host path on the dedicated runner
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  timeout: 1h           # a hung clone must not run forever
+  interruptible: false  # don't let a newer pipeline cancel a long analysis
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl
+    - pip install --no-cache-dir "uv==0.9.27"
+    - uv sync --frozen --no-dev
+  script:
+    - uv run untangle all
+    - |
+      echo "Publishing graph.json (the webapp's data contract) to the generic Package Registry..."
+      curl --fail --silent --show-error \
+        --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file "$DATA_DIR/analysis/graph.json" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/dependency-explorer/latest/graph.json"
+    # DATA_DIR lives outside the workspace; copy the small outputs in for the
+    # 30-day artifact convenience (the registry upload above is the real delivery).
+    - mkdir -p artifacts && cp "$DATA_DIR"/analysis/* artifacts/ 2>/dev/null || true
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ] && [ -n "$ALERT_WEBHOOK_URL" ]; then
+        curl -fsS -X POST -H 'Content-Type: application/json' \
+          -d "{\"text\":\"❌ untangle \`analyze\` failed — pipeline ${CI_PIPELINE_ID}: ${CI_PIPELINE_URL}\"}" \
+          "$ALERT_WEBHOOK_URL" || true
+      fi
+  artifacts:
+    name: "dependency-analysis-$CI_PIPELINE_ID"
+    when: always
+    paths:
+      - artifacts/
+    expire_in: 30 days

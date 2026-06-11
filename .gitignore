@@ -1,0 +1,26 @@
+# Runtime data: clone cache + generated analysis outputs (never committed)
+data/
+webapp/data/
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+
+# Deploy-time config overlay (see config.example/ for templates)
+config/
+
+# Editor / agent local dirs
+.vscode/
+.claude/

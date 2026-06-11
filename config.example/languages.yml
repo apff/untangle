@@ -1,0 +1,14 @@
+# Per-language colors for the graph legend and node orbs (OPTIONAL).
+#
+# The "language" of a node is its primary ecosystem (python, nodejs, docker,
+# terraform, go, rust, gitlab_ci, ...). Sensible defaults ship in
+# graph_contract.DEFAULT_LANGUAGE_COLORS; anything you set here is merged over
+# them, so you only list the ones you want to change or add.
+#
+# languages:
+#   python: '#f2c14e'
+#   nodejs: '#5bb98c'
+#   docker: '#4aa3df'
+#   terraform: '#b48ce8'
+#   go: '#43c9d6'
+#   rust: '#e08a5b'

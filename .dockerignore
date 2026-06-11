@@ -1,0 +1,21 @@
+# Build-context hygiene for Dockerfile.analyzer (context = repo root).
+# Only pyproject.toml, uv.lock, src/ and config/ are needed.
+.git/
+.gitignore
+data/
+webapp/
+docs/
+.venv/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+tests/
+docker-compose.yml
+.dockerignore
+*.md
+**/*.md
+.DS_Store
+**/.DS_Store
+.pytest_cache/
+.ruff_cache/

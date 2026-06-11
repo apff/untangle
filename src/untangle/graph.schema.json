@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://untangle.example.com/graph.schema.json",
+  "title": "Untangle dependency graph",
+  "description": "Output contract emitted by the dependency analyzer and consumed by the Untangle frontend. This is the seam between backend and frontend — version it and treat changes as breaking.",
+  "type": "object",
+  "required": ["version", "generatedAt", "languages", "systems", "nodes", "edges"],
+  "properties": {
+    "version": { "type": "integer", "description": "Schema version. Bump on breaking change." },
+    "appVersion": { "type": "string", "description": "Untangle release that produced this graph (shown in the webapp footer).", "example": "0.1.0" },
+    "latestVersion": { "type": ["string", "null"], "description": "Newest Untangle release available (server-side GitHub check), or null if unknown/disabled. The footer shows an 'update available' hint when this is newer than appVersion.", "example": "0.2.0" },
+    "latestVersionUrl": { "type": ["string", "null"], "description": "Link to the latest release's page (target of the footer update hint).", "example": "https://github.com/apff/untangle/releases/tag/v0.2.0" },
+    "generatedAt": { "type": "string", "format": "date-time", "description": "When the analysis ran. Drives the staleness badge." },
+
+    "languages": {
+      "type": "array",
+      "description": "Palette/legend metadata for languages used across the org.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "color"],
+        "properties": {
+          "id": { "type": "string", "example": "docker" },
+          "label": { "type": "string", "example": "docker" },
+          "color": { "type": "string", "description": "Hex.", "example": "#4aa3df" }
+        }
+      }
+    },
+
+    "systems": {
+      "type": "array",
+      "description": "Logical groupings (teams / domains). Rendered as titled clusters.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "color"],
+        "properties": {
+          "id": { "type": "string", "example": "infra" },
+          "label": { "type": "string", "example": "Infra" },
+          "color": { "type": "string", "description": "Hex; used for the cluster title + accents.", "example": "#e5604d" }
+        }
+      }
+    },
+
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "system", "language", "kind", "type"],
+        "properties": {
+          "id": { "type": "string", "description": "Unique, stable. Used as graph id and in edges.", "example": "ci-components" },
+          "label": { "type": "string", "description": "Display name.", "example": "ci-components" },
+          "system": { "type": "string", "description": "System id, or \"shared\" for org-wide components.", "example": "devtools" },
+          "language": { "type": "string", "description": "Primary language id (must exist in languages[])." },
+          "kind": { "type": "string", "enum": ["hub", "anchor", "repo"], "description": "hub = shared component (lives in the central cluster); anchor = a lib other repos depend on; repo = leaf/consumer." },
+          "type": { "type": "string", "enum": ["database", "api", "library", "service", "tool", "config", "frontend", "infra", "container", "auth", "pipeline"], "description": "Drives the icon drawn inside the node." },
+          "group": { "type": "string", "description": "Forge group/namespace.", "example": "acme/devtools" },
+          "repoPath": { "type": "string", "description": "<group>/<project>.", "example": "acme/devtools/ci-components" },
+          "sourceUrl": { "type": "string", "format": "uri", "description": "Link to the repo's source page." },
+          "description": { "type": ["string", "null"], "description": "Short summary, or null if none available." },
+          "lastCommit": { "type": "string", "format": "date-time", "description": "Last commit timestamp (frontend renders relative + stale flag)." }
+        }
+      }
+    },
+
+    "edges": {
+      "type": "array",
+      "description": "Directed: source DEPENDS ON target (arrow points at the dependency). Dependents of X = incoming edges; blast radius of X = transitive incoming closure.",
+      "items": {
+        "type": "object",
+        "required": ["source", "target"],
+        "properties": {
+          "source": { "type": "string", "description": "Node id of the dependent." },
+          "target": { "type": "string", "description": "Node id of the dependency." },
+          "reasons": {
+            "type": "array",
+            "description": "Why source is coupled to target. Optional/enrich incrementally — emit coarse edges with empty reasons first.",
+            "items": {
+              "type": "object",
+              "required": ["type", "detail"],
+              "properties": {
+                "type": { "type": "string", "enum": ["package", "api", "database", "function", "pipeline", "config"] },
+                "detail": { "type": "string", "description": "Human-readable specifics.", "example": "auth.VerifyToken(), auth.IssueJWT()" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

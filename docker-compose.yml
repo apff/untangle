@@ -1,0 +1,51 @@
+# Standalone deployment: one `docker compose up -d --build` runs both services.
+#
+#   analyzer  clones the configured repos, analyzes them, and writes the report
+#             to the shared `report-data` volume; re-runs every RUN_INTERVAL
+#             seconds (default daily). Configure origins via .env (GITLAB_URL,
+#             GITHUB_ORG/GITHUB_USER, GIT_REPOS) or a mounted config/ dir.
+#   webapp    serves the visualization on http://localhost:8080 straight from
+#             that volume. Until the first analyzer run finishes it shows an
+#             empty "waiting for data" state.
+#
+# Alternative (analyzer runs elsewhere, e.g. CI): drop the analyzer service and
+# set REPORT_URL — the webapp pulls the published report itself on a timer.
+
+services:
+  webapp:
+    build:
+      context: ./webapp
+    image: ${WEB_IMAGE:-untangle-webapp:local}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    environment:
+      REPORT_URL: "${REPORT_URL:-}"
+      REPORT_TOKEN: "${REPORT_TOKEN:-}"
+      REPORT_TOKEN_HEADER: "${REPORT_TOKEN_HEADER:-PRIVATE-TOKEN}"
+      REFRESH_INTERVAL: "${REFRESH_INTERVAL:-21600}"
+    volumes:
+      - report-data:/usr/share/nginx/html/data
+    restart: unless-stopped
+
+  analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyzer
+    image: ${ANALYZER_IMAGE:-untangle-analyzer:local}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATA_DIR: /data
+      WEBAPP_DATA_DIR: /report          # publish the JSON onto the shared volume
+      RUN_INTERVAL: "${RUN_INTERVAL:-86400}"
+    volumes:
+      - analyzer-data:/data             # persistent shallow-clone cache
+      - report-data:/report
+      # Optional config overlay (systems.yml / prefixes.yml / untangle.yml):
+      # - ./config:/app/config:ro
+    restart: unless-stopped
+
+volumes:
+  analyzer-data:
+  report-data:

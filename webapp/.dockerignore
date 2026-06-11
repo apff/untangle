@@ -1,0 +1,8 @@
+# Build-context hygiene for webapp/Dockerfile (context = webapp/).
+# data/ is excluded — it's a symlink/large file in git, and the entrypoint
+# creates + pulls it at runtime. nginx.conf and docker-entrypoint.sh are NOT
+# ignored (the Dockerfile COPYs them); selective COPYs keep them out of the
+# served web root.
+data/
+.DS_Store
+**/.DS_Store
