@@ -7,6 +7,10 @@
 
 import { THEMES } from "./themes.js";
 import { loadGraph, deriveModel, ReportLoadError } from "./data.js";
+import {
+  clamp, decorateNodes, nodeEl, buildAdjacency, blastRadius,
+  clearFx, neighborhood, softHighlight,
+} from "./graph-render.js";
 
 const cytoscape = window.cytoscape;
 const STALE_MS = 36 * 60 * 60 * 1000; // matches the analyzer's daily cadence + headroom
@@ -87,51 +91,11 @@ function build(D) {
   initStaleBadge(D.generatedAt);
   initFooter(D);
 
-  /* ---------- color helpers ---------- */
-  const h2r = (h) => { h = h.replace("#", ""); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); };
-  const r2h = (r, g, b) => "#" + [r, g, b].map((x) => ("0" + Math.round(Math.max(0, Math.min(255, x))).toString(16)).slice(-2)).join("");
-  const mix = (hex, t, k) => { const a = h2r(hex), b = h2r(t); return r2h(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k); };
-  const lighten = (h, k) => mix(h, "#ffffff", k);
-  const darken = (h, k) => mix(h, "#000000", k);
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-  /* ---------- full-graph adjacency (independent of what's visible) ---------- */
-  const fullOut = {}, fullIn = {};
-  D.nodes.forEach((n) => { fullOut[n.id] = []; fullIn[n.id] = []; });
-  D.edges.forEach((e) => { fullOut[e.source].push(e.target); fullIn[e.target].push(e.source); });
-
-  function blastRadius(id) { // transitive dependents (who breaks if id breaks)
-    const seen = new Set(), q = [id];
-    while (q.length) { const cur = q.shift(); (fullIn[cur] || []).forEach((s) => { if (!seen.has(s)) { seen.add(s); q.push(s); } }); }
-    return seen;
-  }
-
-  /* ---------- type icons (drawn inside each node) ---------- */
-  const ic = (inner) => "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1d2940" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>");
-  const ICONS = {
-    database: ic('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>'),
-    api: ic('<path d="M3 9h13l-3-3"/><path d="M21 15H8l3 3"/>'),
-    library: ic('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7L12 12l8.7-5"/><path d="M12 22V12"/>'),
-    service: ic('<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>'),
-    tool: ic('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6.1 6 2.7 2.7 6-6.1a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.1-2.1 2.1-2.1z"/>'),
-    config: ic('<path d="M4 6h9M19 6h1"/><path d="M4 12h3M13 12h7"/><path d="M4 18h11M21 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
-    frontend: ic('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M6.5 6.5h.01"/>'),
-    infra: ic('<path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/>'),
-    container: ic('<path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M4 6.5l8 4.5 8-4.5"/><path d="M12 11v9"/>'),
-    auth: ic('<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>'),
-    pipeline: ic('<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 8v8"/><path d="M8 6h6a2 2 0 0 1 2 2v2.5M16 13.5V16a2 2 0 0 1-2 2H8"/>'),
-  };
-
-  /* ---------- precompute node visual data ---------- */
-  D.nodes.forEach((n) => {
-    const c = (D.LANGS[n.lang] || { color: "#8a8580" }).color;
-    n.color = c; n.colorLite = lighten(c, 0.4); n.colorDark = darken(c, 0.35);
-    const deg = n.indeg + n.outdeg;
-    if (n.kind === "hub") { n.color = lighten(c, 0.05); n.size = clamp(48 + n.indeg * 1.1, 52, 92); }
-    else { n.size = clamp(30 + deg * 3, 30, 60); }
-    n.gradStops = lighten(n.color, 0.5) + " " + n.color + " " + darken(n.color, 0.35);
-    n.icon = ICONS[n.type] || ICONS.service;
-  });
+  /* ---------- graph model precompute (shared with the embed via graph-render.js) ---------- */
+  // Full-graph adjacency (independent of what's visible) + per-node visual data
+  // (color / size / gradient / icon). blastRadius(fullIn, id) = transitive dependents.
+  const { fullOut, fullIn } = buildAdjacency(D);
+  decorateNodes(D);
 
   /* ---------- which nodes are bundled vs present ---------- */
   const memberToSys = {};               // bundleable node id -> system id
@@ -142,15 +106,6 @@ function build(D) {
   const presentInitial = D.nodes.filter((n) => !n.bundleable);
 
   /* ---------- build elements ---------- */
-  function nodeEl(n) {
-    return { group: "nodes", data: {
-      id: n.id, label: n.label, parent: n.system, kind: n.kind,
-      color: n.color, colorLite: n.colorLite, colorDark: n.colorDark,
-      gradStops: n.gradStops, icon: n.icon, ntype: n.type,
-      sysColor: (D.systemById[n.system] || {}).color || "#888", size: n.size, lang: n.lang,
-    }, classes: n.kind === "hub" ? "hub" : "" };
-  }
-
   const elements = [];
   // dummy visual fields so base node-style data() mappings resolve on parents/bundles
   const stub = { color: "#888", colorLite: "#aaa", colorDark: "#444", gradStops: "#aaa #888 #444", size: 50 };
@@ -158,7 +113,7 @@ function build(D) {
   elements.push({ group: "nodes", data: Object.assign({ id: "shared", label: "Shared Components", sysColor: "#9aa3ad", isParent: true }, stub) });
   D.SYSTEMS.forEach((s) => elements.push({ group: "nodes", data: Object.assign({ id: s.id, label: s.label, sysColor: s.color, isParent: true }, stub) }));
   // map shared hubs to parent 'shared'
-  presentInitial.forEach((n) => { const el = nodeEl(n); if (n.system === "shared") el.data.parent = "shared"; elements.push(el); });
+  presentInitial.forEach((n) => { const el = nodeEl(n, D.systemById); if (n.system === "shared") el.data.parent = "shared"; elements.push(el); });
   // bundle nodes (one per system that has bundleables)
   D.SYSTEMS.forEach((s) => {
     const m = bundleMembers[s.id]; if (!m.length) return;
@@ -208,23 +163,10 @@ function build(D) {
   runLayout();
   cy.minZoom(Math.min(cy.zoom() * 0.5, 0.15));
 
-  /* ---------- highlight engine ---------- */
+  /* ---------- highlight engine (primitives shared via graph-render.js) ---------- */
   const state = { locked: false, selected: null, theme: "midnight", light: false, langs: new Set(Object.keys(D.LANGS)), query: "" };
-  function clearFx() { cy.elements().removeClass("dim dim-edge hl blast hl-node blast-node"); }
-  function neighborhood(node) {
-    const edges = node.connectedEdges(":visible");
-    const nodes = edges.connectedNodes().add(node);
-    return { edges, nodes };
-  }
-  function softHighlight(node) {
-    const { edges, nodes } = neighborhood(node);
-    cy.elements().addClass("dim"); cy.edges().addClass("dim-edge");
-    nodes.removeClass("dim").addClass("hl-node"); node.removeClass("hl-node");
-    edges.removeClass("dim dim-edge").addClass("hl"); nodes.removeClass("dim-edge");
-    cy.nodes(":parent").removeClass("dim");
-  }
   function focusNode(node) {
-    clearFx(); softHighlight(node);
+    clearFx(cy); softHighlight(cy, node);
     cy.animate({ fit: { eles: neighborhood(node).nodes, padding: 110 } }, { duration: 420, easing: "ease-out" });
   }
 
@@ -237,7 +179,7 @@ function build(D) {
     const members = bundleMembers[sysId];
     const added = cy.collection();
     members.forEach((id) => {
-      const n = D.byId[id]; const el = nodeEl(n);
+      const n = D.byId[id]; const el = nodeEl(n, D.systemById);
       el.data.parent = sysId;
       const node = cy.add(el); node.position({ x: bp.x, y: bp.y }); added.merge(node);
     });
@@ -316,11 +258,11 @@ function build(D) {
 
   /* ---------- blast radius ---------- */
   function showBlast(id) {
-    const set = blastRadius(id);
+    const set = blastRadius(fullIn, id);
     const sysToExpand = new Set();
     set.forEach((d) => { if (memberToSys[d]) sysToExpand.add(memberToSys[d]); });
     sysToExpand.forEach((s) => { if (cy.getElementById(s).data("collapsed")) expandSystem(s); expandBundle(s, false); });
-    clearFx();
+    clearFx(cy);
     cy.elements().addClass("dim"); cy.edges().addClass("dim-edge");
     cy.nodes(":parent").removeClass("dim");
     const inBlast = (nid) => set.has(nid) || nid === id;
@@ -362,7 +304,7 @@ function build(D) {
     setActiveSystem(null);
     const id = node.id(), n = D.byId[id];
     const deps = fullOut[id] || [], dependents = fullIn[id] || [];
-    const blast = blastRadius(id).size;
+    const blast = blastRadius(fullIn, id).size;
     const sys = D.systemById[n.system];
     const lang = D.LANGS[n.lang] || { label: n.lang, color: "#8a8580" };
     const kindLabel = n.kind === "hub" ? "shared component" : n.kind === "anchor" ? "library" : "repository";
@@ -445,20 +387,20 @@ function build(D) {
   renderEmpty();
 
   /* ---------- events ---------- */
-  cy.on("mouseover", "node", (e) => { if (!state.locked && !e.target.data("isParent")) softHighlight(e.target); });
+  cy.on("mouseover", "node", (e) => { if (!state.locked && !e.target.data("isParent")) softHighlight(cy, e.target); });
   // Restore the language/search filter on mouseout — clearFx() strips the same
   // dim/hl-node classes the filter uses, so re-apply it or filtering "sticks off".
-  cy.on("mouseout", "node", () => { if (!state.locked) { clearFx(); applyFilter(); } });
+  cy.on("mouseout", "node", () => { if (!state.locked) { clearFx(cy); applyFilter(); } });
   cy.on("tap", "node", (e) => {
     const n = e.target;
-    if (n.id().indexOf("sum:") === 0) { const sysId = n.id().slice(4); expandSystem(sysId); state.locked = false; clearFx(); renderSystem(cy.getElementById(sysId)); cy.animate({ fit: { eles: cy.getElementById(sysId), padding: 120 } }, { duration: 420 }); return; }
+    if (n.id().indexOf("sum:") === 0) { const sysId = n.id().slice(4); expandSystem(sysId); state.locked = false; clearFx(cy); renderSystem(cy.getElementById(sysId)); cy.animate({ fit: { eles: cy.getElementById(sysId), padding: 120 } }, { duration: 420 }); return; }
     if (n.data("isBundle")) { toggleBundle(n); renderBundle(n); return; }
-    if (n.data("isParent")) { state.locked = false; clearFx(); renderSystem(n); return; }
+    if (n.data("isParent")) { state.locked = false; clearFx(cy); renderSystem(n); return; }
     state.locked = true; state.selected = n.id(); focusNode(n); routeDetails(n);
   });
   cy.on("dbltap", "node", (e) => { if (e.target.data("isParent")) { toggleSystem(e.target); renderSystem(e.target); } });
-  cy.on("tap", "edge", (e) => { state.locked = true; clearFx(); e.target.addClass("hl"); renderEdge(e.target); });
-  function resetView() { state.locked = false; state.selected = null; cy.$(":selected").unselect(); clearFx(); applyFilter(); renderEmpty(); cy.animate({ fit: { padding: 90 } }, { duration: 420 }); }
+  cy.on("tap", "edge", (e) => { state.locked = true; clearFx(cy); e.target.addClass("hl"); renderEdge(e.target); });
+  function resetView() { state.locked = false; state.selected = null; cy.$(":selected").unselect(); clearFx(cy); applyFilter(); renderEmpty(); cy.animate({ fit: { padding: 90 } }, { duration: 420 }); }
   cy.on("tap", (e) => { if (e.target === cy) resetView(); });
   const overviewLink = document.getElementById("overviewLink");
   if (overviewLink) overviewLink.onclick = (e) => { e.preventDefault(); resetView(); };
@@ -468,7 +410,7 @@ function build(D) {
   const titleDivs = {};
   function titleFit(id) {
     const p = cy.getElementById(id); if (p.empty()) return;
-    state.locked = false; cy.$(":selected").unselect(); clearFx();
+    state.locked = false; cy.$(":selected").unselect(); clearFx(cy);
     renderSystem(p);
     cy.animate({ fit: { eles: p.descendants().add(p), padding: 70 } }, { duration: 420, easing: "ease-out" });
   }
@@ -552,7 +494,7 @@ function build(D) {
   });
   const search = document.getElementById("search");
   search.oninput = () => { state.query = search.value; applyFilter(); };
-  search.onkeydown = (e) => { if (e.key === "Enter") { const m = cy.nodes().filter((n) => !n.data("isParent") && !n.data("isBundle") && (n.data("label") || "").toLowerCase().includes(state.query.trim().toLowerCase()) && n.visible()); if (m.nonempty()) { const t = m[0]; state.locked = true; state.selected = t.id(); clearFx(); focusNode(t); routeDetails(t); } } };
+  search.onkeydown = (e) => { if (e.key === "Enter") { const m = cy.nodes().filter((n) => !n.data("isParent") && !n.data("isBundle") && (n.data("label") || "").toLowerCase().includes(state.query.trim().toLowerCase()) && n.visible()); if (m.nonempty()) { const t = m[0]; state.locked = true; state.selected = t.id(); clearFx(cy); focusNode(t); routeDetails(t); } } };
 
   applyTheme();
 }
